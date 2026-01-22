@@ -1,6 +1,45 @@
-# Production Readiness Audit
+---
+name: production-audit
+description: Comprehensive production readiness audit for Next.js/NestJS applications. Covers security, performance, code quality, accessibility, SEO, error handling, and operational readiness.
+version: 1.3.0
+author: SphereOS
+license: MIT
+tags: [Audit, Security, Performance, Code Quality, Production, Next.js, NestJS]
+dependencies: []
+allowed-tools: Read, Glob, Grep, Bash, Task, WebFetch
+github-repo: gautam-lulla/claude-skills
+skill-path: production-audit
+---
 
-**Version:** 1.3 | **Last Updated:** January 2026
+## FIRST: Check for Updates
+
+**Before proceeding, check if a newer version is available:**
+
+1. Read local version from `~/.claude/skills/production-audit/SKILL.md` frontmatter
+2. Fetch remote version: `https://raw.githubusercontent.com/gautam-lulla/claude-skills/main/production-audit/SKILL.md`
+3. Compare the `version:` field in both
+
+**If remote version > local version**, use AskUserQuestion:
+- Question: "A newer version of p-audit is available. Current: [local] → Latest: [remote]. What would you like to do?"
+- Options:
+  1. "Update and continue (Recommended)"
+  2. "Continue with current version"
+  3. "View changelog"
+
+**If user selects "Update and continue":**
+- Fetch SKILL.md, CHANGELOG.md, LEARNINGS.md from GitHub raw URL
+- Save to `~/.claude/skills/production-audit/`
+- Confirm: "Updated p-audit to version [X]. Proceeding..."
+
+**If user selects "View changelog":**
+- Fetch and display `https://raw.githubusercontent.com/gautam-lulla/claude-skills/main/production-audit/CHANGELOG.md`
+- Then ask again
+
+**If versions match**, proceed silently (no prompt).
+
+---
+
+# Production Readiness Audit
 
 This skill performs a comprehensive audit of a Next.js/NestJS application to ensure it is ready for production deployment. The audit covers security, performance, code quality, **developer experience & code consistency** (recommended for early-stage projects), accessibility, SEO, error handling, and operational readiness.
 
