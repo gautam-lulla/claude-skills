@@ -1,8 +1,26 @@
 # Production Readiness Audit
 
-**Version:** 1.2 | **Last Updated:** January 2026
+**Version:** 1.3 | **Last Updated:** January 2026
 
-This skill performs a comprehensive audit of a Next.js application to ensure it is ready for production deployment. The audit covers security, performance, code quality, **developer experience & code consistency** (recommended for early-stage projects), accessibility, SEO, error handling, and operational readiness.
+This skill performs a comprehensive audit of a Next.js/NestJS application to ensure it is ready for production deployment. The audit covers security, performance, code quality, **developer experience & code consistency** (recommended for early-stage projects), accessibility, SEO, error handling, and operational readiness.
+
+---
+
+## IMPORTANT: First Step - Select Project
+
+**Before running any audit checks, you MUST ask the user which project to audit using AskUserQuestion:**
+
+```
+Use AskUserQuestion with:
+- Question: "Which project should I run the production audit on?"
+- Options:
+  1. Current directory ([show actual pwd path])
+  2. Enter a different path
+```
+
+If the user selects option 2 ("Enter a different path"), they will type the path. Use that path for all subsequent audit commands.
+
+Store the selected project path and use it as the base path for ALL file searches, reads, and commands throughout the audit.
 
 ---
 
@@ -10,11 +28,12 @@ This skill performs a comprehensive audit of a Next.js application to ensure it 
 
 Invoke with `/production-audit` and Claude will:
 
-1. Read the project structure and configuration files
-2. Perform automated checks across all audit categories
-3. Generate a detailed report with findings
-4. Provide severity ratings (Critical, High, Medium, Low)
-5. Suggest fixes for each issue found
+1. **Ask which project to audit** (current directory or custom path)
+2. Read the project structure and configuration files
+3. Perform automated checks across all audit categories
+4. Generate a detailed report with findings
+5. Provide severity ratings (Critical, High, Medium, Low)
+6. Suggest fixes for each issue found
 
 ---
 
