@@ -2,6 +2,22 @@
 
 All notable changes to the Production Audit (p-audit) skill will be documented in this file.
 
+## [2.3.0] - 2026-07-10
+
+### Added
+- **Live Verification pass (read-only)** in the Audit Methodology: security findings (IDOR, cross-tenant, authorization) and accessibility (WCAG 2.2 AA) are now verified against the running dev servers — log in as two test accounts and attempt cross-tenant reads, run axe-core/Lighthouse, keyboard-walk key flows. Read actions and clearly-marked test data ONLY; no writes, no mutations, no destructive/money-moving calls. Findings verified live earn `Confirmed`; unverifiable ones stay `High Confidence`/`Needs Verification`
+- **Section 22 Codebase-Specific Invariants & Known-Bug Regression Checks** — a LIVING checklist that loads the target project's CLAUDE.md "Invariants" section and treats every past bug as a named regression check, plus a high-severity starter set (cross-tenant authz, money-step zero-retry, booking idempotency, secret non-exposure, analytics DB-split joins, AiProviderService wiring, resolver decorator placement, @Cron double-fire, single-instance limiters, deploy SITE_URL, ingest CORS, MCP boundaries, ws override). Auto-expands as CLAUDE.md grows; highest-signal section because each check maps to a real prior incident
+- **Report Section 2B Scope & Coverage Disclosure**: states which flows were traced end-to-end, whether the live-verification pass ran, and which checks were static-only — so confidence ratings are backed by visible coverage rather than self-asserted
+- **Severity rubric**: severity is now derived from exploitability × blast radius × data sensitivity, not eyeballed — reproducible across runs and auditors
+- **Adversarial second pass**: every High/Critical finding must survive an explicit refutation attempt (look for the upstream guard, the base-repo tenant filter, the framework default) before it ships
+- **Machine-readable JSON findings file** emitted alongside the Markdown report, enabling automatic audit-over-audit diffing (resolved/new/still-open) instead of manual comparison
+
+### Changed
+- **Resource Constraints rewritten.** The stale "never run parallel agents" rule (written for a 16GB machine) is replaced with the real constraint for 32GB: up to ~4 parallel read-only analysis agents (~6 when dev servers are down), but never more than ONE heavy process (test/build/live-verification browser pass) at a time. The cap is on concurrent heavy work, not on agent count
+- **`Confirmed` confidence now has a hard bar**: reproduced live, exhaustively traced with no possible upstream guard, or self-evident in source (e.g. hardcoded secret). Unexecuted "looks wrong" findings cannot be Confirmed
+- **Grep scope widened** beyond `src/` to `admin/` and `packages/` for all frontend/rendered-output checks (accessibility, visual consistency, client race conditions, XSS, token storage)
+- Health Scorecard template expands to 22 rows; overall score is now /220
+
 ## [2.2.0] - 2026-07-10
 
 ### Added
@@ -92,6 +108,7 @@ All notable changes to the Production Audit (p-audit) skill will be documented i
 
 | Version | Date | Summary |
 |---------|------|---------|
+| 2.3.0 | 2026-07-10 | Read-only live-verification pass (security + a11y), codebase-specific invariant regression checks (Section 22, living), severity rubric, adversarial second pass, coverage disclosure, JSON output; parallel-agent rule modernized for 32GB |
 | 2.2.0 | 2026-07-10 | End-to-end flow-tracing methodology, evidence/confidence on findings, release recommendation, 3 new categories (client race conditions, visual consistency, responsive edge cases) |
 | 2.1.0 | 2026-07-09 | Four go-live categories: PCI, concurrency/multi-instance, load & capacity, pen-test readiness |
 | 2.0.0 | 2026-04-24 | Major report format overhaul, automated verification suite (lint/test/cov/build) |

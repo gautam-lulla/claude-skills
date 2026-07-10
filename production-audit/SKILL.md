@@ -1,7 +1,7 @@
 ---
 name: production-audit
-description: Comprehensive production readiness audit for Next.js/NestJS applications. Covers security, performance, code quality, accessibility, SEO, error handling & reliability, client-side race conditions, visual consistency, responsive edge cases, and operational readiness.
-version: 2.2.0
+description: Comprehensive production readiness audit for Next.js/NestJS applications. Covers security, performance, code quality, accessibility, SEO, error handling & reliability, client-side race conditions, visual consistency, responsive edge cases, codebase-specific invariant regression checks, and operational readiness. Includes a read-only live-verification pass against the running app.
+version: 2.3.0
 author: SphereOS
 license: MIT
 tags: [Audit, Security, Performance, Code Quality, Production, Next.js, NestJS]
@@ -65,12 +65,26 @@ Store the selected project path and use it as the base path for ALL file searche
 
 ## IMPORTANT: Resource Constraints
 
-**Do NOT run parallel agents.** Running multiple agents consumes excessive memory and makes the system unresponsive. Instead:
+The real constraint is **concurrent heavy processes**, not agent count. On a 32GB machine, a
+read-only analysis agent (grep/read/trace) costs only ~0.3-0.5GB; a `npm test` or `npm run build`
+spikes 1-2GB. So the cap belongs on heavy work, not on parallelism.
 
-- **Run everything sequentially** using a single agent (yourself)
-- **No Task tool agents** - perform all audit checks directly
-- **No background commands** - wait for each command to complete before running the next
-- Execute audit checks one category at a time in order
+- **Parallel analysis agents are OK — up to ~4.** You MAY fan out read-only analysis agents (e.g.
+  one per audit category or category-group) to speed up the static pass, then synthesize their
+  findings into one report. Cap at ~4 when the dev servers are up (mirrors the project's Jest
+  maxWorkers), up to ~6 when they're not. Each such agent must be read-only: Read/Grep/Bash-for-
+  inspection only, no tests, no builds, no writes.
+- **Never more than ONE heavy process at a time.** Tests, builds, and the live-verification browser
+  pass are serialized — one at a time, regardless of how many analysis agents are running. This is
+  the guard that actually matters. Don't have two agents each run `npm test`/`npm run build`, and
+  don't duplicate dev servers already running.
+
+**Live-verification pass (read-only):** This machine comfortably runs the three dev servers
+(backend :3501, admin :3502, site/booking-engine :3580), and they're usually already up. The audit
+MAY connect to the running app and drive a browser (Playwright) to VERIFY security and accessibility
+findings — see "Live Verification" in the Audit Methodology. Run it as a single sequential pass
+(it's one of the "one heavy process at a time" slots). If the servers are down, note it and fall
+back to static analysis for those checks rather than cold-starting a heavy stack mid-audit.
 
 ---
 
@@ -87,7 +101,7 @@ Invoke with `/production-audit` and Claude will:
    - Note: E2E tests are **skipped by default** (require running services). Include only if the user explicitly requests them.
    - If any command fails, capture the failure output and continue with the remaining checks. Do NOT abort the audit.
 3. Read the project structure and configuration files
-4. Trace the application's critical user flows end-to-end (see Audit Methodology), then perform analysis across all 21 audit categories
+4. Trace the application's critical user flows end-to-end (see Audit Methodology), then perform analysis across all 22 audit categories
 5. Generate a detailed report using the Audit Report Template below
 6. Provide severity ratings (Critical, High, Medium, Low), a Confidence rating per finding, and per-category health scores
 7. Suggest fixes for each issue found, grouped into an action plan with a release recommendation
@@ -104,7 +118,22 @@ Invoke with `/production-audit` and Claude will:
 
 4. **Challenge assumptions.** Actively hunt for problems that only emerge under real conditions: unreliable networks, concurrent actions, repeated clicks, multiple tabs, malicious input, empty or enormous datasets, and non-ideal content. "Works on the happy path at the developer's viewport" is not evidence of production readiness. Do not limit the audit to obvious linting or styling issues.
 
-5. **The audit is read-only.** Do NOT modify code, configuration, or data during the audit. Produce the complete findings report first. Fixes happen afterward, as separately agreed work — never mid-audit.
+5. **The audit is read-only.** Do NOT modify code, configuration, or data during the audit. Produce the complete findings report first. Fixes happen afterward, as separately agreed work — never mid-audit. (Read-only means no code/config/data changes — the Live Verification pass below still only performs safe *read* actions.)
+
+6. **Live Verification (security + accessibility).** Static analysis proposes; the running app confirms. After the static pass, run a single sequential verification pass against the already-running dev servers (do not cold-start a heavy stack — if they're down, note it and skip). This pass is **read-only probing**: safe read actions and clearly-marked test data ONLY — never write to real/prod-like data, never fire destructive or money-moving calls, never exercise mutations for their side effects.
+   - **Security:** for each suspected authorization/IDOR/cross-tenant finding, verify it. Log in as two separate test accounts (two orgs), and attempt to read account B's object using account A's session — a success is a *Confirmed* Critical; a clean 403/404 kills the finding. Check that guarded mutations reject unauthenticated/wrong-role callers.
+   - **Accessibility:** WCAG 2.2 AA is not reliably auditable from source. Run axe-core / Lighthouse against the key rendered pages, keyboard-walk the primary flows (login, booking, a form, a modal), and confirm what a screen reader announces on dynamic changes. Report tool output, not guesses.
+   - Anything you could not verify live stays at *High Confidence* / *Needs Verification* and says why (servers down, no test data, etc.). Never upgrade to *Confirmed* without an executed check.
+
+7. **Severity is derived, not guessed.** Rate each finding on three axes and combine — don't eyeball it:
+   - **Exploitability:** trivial/remote-unauth (high) → needs auth + specific conditions (low)
+   - **Blast radius:** whole tenant base / all deployed sites / money or messages to third parties (high) → one non-critical widget (low)
+   - **Data sensitivity:** credentials, PII, cross-tenant data, payment data (high) → cosmetic/public data (low)
+   Guide: **Critical** = high on exploitability AND (high blast radius OR high sensitivity) — e.g. unauth cross-tenant data read. **High** = serious but gated by auth/conditions, or high-impact but not directly exploitable. **Medium** = real but contained. **Low** = minor/cosmetic. **Informational** = no direct risk, worth noting. Applying the rubric the same way every run is what makes audit-over-audit trend numbers mean something.
+
+8. **Adversarial second pass on High/Critical.** Before finalizing, re-examine every High and Critical finding with the opposite goal: try to *refute* it. Is there a guard upstream you missed? A tenant filter applied in a base repository? A framework default that already covers it? A finding that survives a genuine refutation attempt ships; one that doesn't gets downgraded or dropped. This is the single biggest defense against confident-but-wrong findings.
+
+9. **Search the whole tree, not just `src/`.** This monorepo splits across `src/` (backend), `admin/` (Next.js admin), and `packages/` (shared renderer + `site-template` booking engine). The grep commands in each category default to `src/`; widen them to `admin/` and `packages/` wherever the check applies to frontend or rendered output (accessibility, visual consistency, client race conditions, XSS, token storage). A check that only greps `src/` silently gives the frontend a free pass.
 
 ---
 
@@ -131,6 +160,7 @@ Invoke with `/production-audit` and Claude will:
 19. [Client-Side Race Conditions & State Integrity Audit](#19-client-side-race-conditions--state-integrity-audit) ⭐ *Real-user conditions*
 20. [Visual & Interaction Consistency Audit](#20-visual--interaction-consistency-audit)
 21. [Responsive & Edge-Case Content Audit](#21-responsive--edge-case-content-audit)
+22. [Codebase-Specific Invariants & Known-Bug Regression Checks](#22-codebase-specific-invariants--known-bug-regression-checks) ⭐ *Living — highest signal*
 
 ---
 
@@ -2331,6 +2361,39 @@ If this is the first audit (no prior data), put "-- first audit --" in the Delta
 
 ---
 
+### SECTION 2B: Scope & Coverage Disclosure
+
+State plainly what the audit actually examined, so a reader can tell "clean" from "not looked at." A confidence rating is only trustworthy if the coverage behind it is visible. Do not omit this — an audit that hides its own gaps is worse than one that admits them.
+
+```
++--------------------------------------------------------------+
+|                    SCOPE & COVERAGE                           |
++--------------------------------------------------------------+
+
+  FLOWS TRACED END-TO-END:
+    [x] Auth / login / session
+    [x] Booking / payment path
+    [ ] Content publish / deploy      <-- NOT traced (reason)
+    [x] Public page render / API
+    [ ] ...
+
+  LIVE VERIFICATION PASS:
+    Status: [Ran against :3501/:3502/:3580 | Skipped — servers down]
+    Security probes executed: [e.g. cross-tenant read attempt on
+      bookings + media; guarded-mutation auth checks] or "none"
+    Accessibility tools run: [axe-core / Lighthouse on pages X, Y]
+      or "none — static only"
+
+  CHECKS THAT WERE STATIC-ONLY (not runtime-verified):
+    [List the categories/areas confirmed only by reading code, so
+     their findings carry High Confidence at most.]
+
+  AREAS EXPLICITLY OUT OF SCOPE THIS RUN:
+    [Anything deliberately not audited, with the reason.]
+```
+
+---
+
 ### SECTION 3: Health Scorecard
 
 Score each category 0-10 based on findings. The score reflects how healthy that area is (10 = no issues, 0 = critical failures). Use the trend arrow to indicate direction vs. last audit (or "--" if first audit).
@@ -2362,8 +2425,9 @@ Score each category 0-10 based on findings. The score reflects how healthy that 
 | 19 | Client Race Conditions |  6/10 |   C+  |   --   |       |
 | 20 | Visual Consistency     |  7/10 |   B   |   --   |       |
 | 21 | Responsive & Edge Cases|  7/10 |   B   |   --   |       |
+| 22 | Codebase Invariants    |  6/10 |   C+  |   --   |       |
 +----+------------------------+-------+-------+--------+-------+
-|    | OVERALL                | XX/210|  [G]  |        |       |
+|    | OVERALL                | XX/220|  [G]  |        |       |
 +----+------------------------+-------+-------+--------+-------+
 
 Grade scale: A (9-10), B (7-8), C (5-6), D (3-4), F (0-2)
@@ -2458,7 +2522,12 @@ Each finding uses this structure:
 
 **Finding ID format:** `[SEV-NNN]` where SEV is the severity abbreviation (CRIT, HIGH, MED, LOW) and NNN is a sequential number across the entire report. This lets findings be referenced in the Action Plan.
 
-**Confidence levels:** `Confirmed` = traced/reproduced, or the defect is self-evident in the code path. `High Confidence` = strong code evidence, but not executed. `Needs Verification` = plausible from the code but depends on runtime conditions the audit couldn't check — state exactly what needs verifying. Pure speculation with no supporting evidence at any level must NOT be reported. Prioritize findings by real-world impact and exploitability, and never present a Needs-Verification item with the same weight as a Confirmed one.
+**Confidence levels (do not inflate — `Confirmed` has a hard bar):**
+- `Confirmed` — REQUIRES one of: (a) reproduced live in the running app during the Live Verification pass, (b) a traced execution path with no possible upstream guard, or (c) a defect self-evident on its face (e.g. a secret literally hardcoded in source). "It looks wrong" is never Confirmed. If you did not execute or exhaustively trace it, it is not Confirmed.
+- `High Confidence` — strong, specific code evidence, but not executed and not exhaustively traced. Most static-analysis findings land here.
+- `Needs Verification` — plausible from the code but dependent on runtime conditions you couldn't check; state exactly what must be verified and why you couldn't.
+
+Pure speculation with no supporting evidence must NOT be reported at any level. Prioritize findings by real-world impact and exploitability (per the severity rubric), and never present a Needs-Verification item with the same weight as a Confirmed one.
 
 If a category has no findings:
 
@@ -2662,6 +2731,7 @@ A pass/fail checklist for rapid re-verification. Check or uncheck based on actua
 7. **If a finding references a known exception** documented in CLAUDE.md (e.g., the npm audit uuid findings), note it as "Known / Accepted" and do not count it as an open finding
 8. **The audit itself is read-only** — the complete report is produced BEFORE any fix is applied; fixes are separate, subsequent work
 9. **Every finding carries Evidence and a Confidence level** — findings without supporting evidence are dropped, not hedged
+10. **Also emit a machine-readable findings file** alongside the Markdown report: `~/Desktop/audit-report-[PROJECT_NAME]-[YYYY-MM-DD].json`, an array of findings each with `{ id, severity, category, confidence, title, location, effort }`. This is what makes audit-over-audit comparison (Section 8) automatic instead of eyeballed — the next run diffs against the prior JSON to compute resolved/new/still-open.
 
 ---
 
@@ -3689,7 +3759,71 @@ Check key screens at: 320px (small phone), 375px, 768px (tablet), 1280px, 1440px
 
 ---
 
+## 22. Codebase-Specific Invariants & Known-Bug Regression Checks
+
+> **This section is a LIVING checklist and is expected to grow as the codebase does.**
+> The generic categories (1–21) catch general classes of problem. This section catches
+> the specific mistakes THIS codebase has already made once — the highest-signal checks
+> available, because each maps to a real past incident. A regression here is not
+> theoretical; it has shipped before.
+
+### 22.1 Load the project's own invariants FIRST
+
+The single richest source is the project's `CLAUDE.md` "Invariants (Lessons From Past Bugs)"
+section (in this repo: `/Users/gautamlulla/aphalo/halo/CLAUDE.md`). It is a curated, continuously
+updated log of real bugs and the rules that prevent their recurrence.
+
+**Procedure:**
+1. Read the target project's `CLAUDE.md` (and any nested module `CLAUDE.md`) in full.
+2. Treat **every** invariant as a named regression check. For each, verify the current code still
+   honors it, and if not, file a finding referencing the invariant by name.
+3. Because `CLAUDE.md` is updated whenever a bug is fixed, this check auto-expands over time — you
+   do NOT need to keep this section's static list exhaustive. `CLAUDE.md` is the source of truth;
+   the list in 22.2 is a fast-start subset of the highest-severity ones.
+
+### 22.2 High-severity starter checks (verify each against current code)
+
+These are the load-bearing ones — confirm they still hold, then continue through the full
+`CLAUDE.md` invariant list. Severity shown is the impact if the invariant is violated.
+
+| # | Invariant / past bug | Severity | How to check |
+|---|----------------------|----------|--------------|
+| 1 | **Cross-tenant authz**: id-only resolvers that skip org/tenant scoping (the CONFIRMED hole; hard gate before a 2nd tenant) | Critical | Trace each `findOne({ id })` on tenant-scoped data; confirm an org/property filter or ownership check. Verify live if servers up (Methodology step 6). |
+| 2 | **Money steps never auto-retry**: charge/authorize/reservation-create must be `retries: 0` (double-charge risk) | Critical | Inspect the reservation/payment resilience policies; confirm money steps pass the zero-retry policy while only safe reads retry. |
+| 3 | **Booking idempotency**: whole-attempt timeout retry REUSES the same key+payload; partial retry mints a new key with only failed lodges | Critical | Trace the idempotency-key lifecycle from UI mint through `IdempotencyCache` replay. |
+| 4 | **Reservation/page secrets never surface**: no plaintext secret in any GraphQL/REST response, log line, or audit payload — only derived `credentialConfigured`/`passwordProtected` booleans | Critical | Grep resolvers/DTOs for secret fields; confirm only boolean projections are exposed. |
+| 5 | **Analytics DB split**: no single SQL statement joins an analytics table (`site_events`, `analytics_sessions_v2`, `page_rollups_daily`) to an app table; those repos use the named `analytics` connection | High | Grep for queries mixing the three analytics tables with app tables; confirm cross-side joins happen in JS, not SQL. |
+| 6 | **AiProviderService wiring**: provided only from `AiCoreModule`, never re-registered as a bare local provider; callers pass `orgId` explicitly; `isSystemAdmin` only from the admin panel | High | Grep for stray `AiProviderService` providers; confirm background/public callers pass `false` and a real `orgId`. |
+| 7 | **GraphQL resolver decorator placement**: never insert a method between an existing method's decorator and its body (the f9ef8769 schema-corruption incident) | High | On any touched resolver, confirm each `@Query`/`@Mutation` sits directly above its intended method; run the module's e2e schema-regression test. |
+| 8 | **@Cron double-fire**: every real cron job runs inside `DistributedLockService.withLock`; new `@Cron` jobs must too | High | Grep `@Cron`; confirm each is wrapped; flag any bare scheduled job. |
+| 9 | **In-memory limiters are single-instance**: MCP mint limiter, AI semaphore, booking `IdempotencyCache` break across instances — must be documented single-instance or moved to Redis before scale-out | High | Confirm these are still single-instance and that no silent horizontal scale-out has been enabled. |
+| 10 | **Deploy SITE_URL**: persisted from the STABLE production alias, never the per-deploy `status.url`; Vercel env vars upserted every deploy; `triggerDeployment` fires on every deploy | High | Trace the deploy verify path; confirm the stable-base resolution order and that env sync + trigger are unconditional. |
+| 11 | **Ingest CORS**: preflight allows `Content-Encoding` (gzipped batches) and ACAO reflects origin, never `*` for credentialed beacons | High | Inspect `ingest-cors.ts`; confirm both. |
+| 12 | **MCP endpoint is open/keyless BY DESIGN** but must never wire tools to `AiProviderService` or add a payment/inline-booking tool | High | Grep the MCP tools dir; confirm no AI-provider imports and share-link-only handoff. |
+| 13 | **No `npm audit fix --force`; `ws` override ≥ 8.21.0**: known accepted findings must not be "fixed" by a forced downgrade | Medium | Confirm the `ws` override and that accepted @apollo/bullmq→uuid findings aren't counted as open (see Report Output Rule 7). |
+
+### 22.3 Keep this section current
+
+When the target project's `CLAUDE.md` gains a new invariant tied to a real incident of Critical/High
+severity, add a matching row to 22.2 (or rely on 22.1 to pick it up automatically). When an
+invariant is retired in `CLAUDE.md`, remove its row here. This section should track the project's
+bug history, not drift from it — same discipline the project applies to `CLAUDE.md` itself.
+
+---
+
 ## Version History
+
+**v2.3** (July 2026)
+- Live Verification pass (read-only) added to methodology: security findings (IDOR/cross-tenant/authz) and accessibility (WCAG 2.2 AA via axe/Lighthouse + keyboard/screen-reader walk) are now verified against the running dev servers, not just read from source — only safe read actions and test data, never writes/mutations
+- Resource Constraints rewritten: the stale "no parallel agents" ban replaced with the real rule for a 32GB machine — up to ~4 parallel read-only analysis agents (6 if servers down), but never more than ONE heavy process (test/build/live-verification) at a time
+- Severity is now derived from a rubric (exploitability × blast radius × data sensitivity), not eyeballed — makes ratings reproducible across runs
+- Confidence tightened: `Confirmed` now has a hard bar (reproduced live, exhaustively traced, or self-evident) — no more optimistic "Confirmed" on unexecuted findings
+- Adversarial second pass: every High/Critical finding must survive an explicit refutation attempt before shipping (kills confident-but-wrong findings)
+- New Section 22 Codebase-Specific Invariants & Known-Bug Regression Checks — a LIVING checklist that loads the target project's CLAUDE.md invariants and treats each past bug as a named regression check, plus a high-severity starter set; auto-expands as CLAUDE.md grows
+- New report Section 2B Scope & Coverage Disclosure: states which flows were traced, whether live verification ran, and what was static-only — so confidence ratings are backed by visible coverage
+- Grep scope widened beyond `src/` to `admin/` and `packages/` for frontend/rendered-output checks
+- Machine-readable JSON findings file emitted alongside the Markdown report for automatic audit-over-audit diffing
+- Health Scorecard expands to 22 rows (overall /220)
 
 **v2.2** (July 2026)
 - New "Audit Methodology" section applying to every category: trace user flows end-to-end (not file-by-file review), adversarial posture for security / systematic for accessibility / precise for UI, evidence-over-speculation standard, challenge happy-path assumptions, and an explicit read-only rule (no code changes until the report is complete)
